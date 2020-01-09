@@ -25,6 +25,7 @@ import (
 
 	"github.com/intel/intel-device-plugins-for-kubernetes/pkg/debug"
 	dpapi "github.com/intel/intel-device-plugins-for-kubernetes/pkg/deviceplugin"
+	"github.com/klauspost/cpuid"
 )
 
 const (
@@ -60,11 +61,16 @@ func (dp *devicePlugin) Scan(notifier dpapi.Notifier) error {
 func (dp *devicePlugin) scan() (dpapi.DeviceTree, error) {
 	devTree := dpapi.NewDeviceTree()
 
-	sgxPath := path.Join(dp.devfsDir, "isgx")
+	fmt.Println("SGX available:", cpuid.CPU.SGX.Available)
+	fmt.Println("SGX launch control:", cpuid.CPU.SGX.LaunchControl)
+	fmt.Println("SGX memory 1:", cpuid.CPU.SGX.MaxEnclaveSize64)
+	fmt.Println("SGX memory 2:", cpuid.CPU.SGX.MaxEnclaveSizeNot64)
+
+	sgxPath := path.Join(dp.devfsDir, "sgx", "enclave")
 	if _, err := os.Stat(sgxPath); err != nil {
 		fmt.Println("No SGX device file available: ", err)
 	} else {
-		devID := fmt.Sprintf("%s-%d", "isgx", 0) // FIXME
+		devID := fmt.Sprintf("%s-%d", "sgx", 0) // FIXME
 		devTree.AddDevice(deviceType, devID, dpapi.DeviceInfo{
 			State: pluginapi.Healthy,
 			Nodes: []pluginapi.DeviceSpec{

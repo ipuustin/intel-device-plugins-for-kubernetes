@@ -7,6 +7,7 @@ require (
 	github.com/go-ini/ini v1.46.0
 	github.com/google/gousb v0.0.0-20190812193832-18f4c1d8a750
 	github.com/onsi/ginkgo v1.11.0
+	github.com/klauspost/cpuid v1.2.3-0.20200108110229-e6afad73b29d
 	github.com/onsi/gomega v1.7.0
 	github.com/pkg/errors v0.8.1
 	golang.org/x/sys v0.0.0-20191022100944-742c48ecaeb7
