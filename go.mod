@@ -6,6 +6,7 @@ require (
 	github.com/fsnotify/fsnotify v1.4.7
 	github.com/go-ini/ini v1.46.0
 	github.com/google/gousb v0.0.0-20190812193832-18f4c1d8a750
+	github.com/klauspost/cpuid v1.2.3
 	github.com/onsi/ginkgo v1.11.0
 	github.com/onsi/gomega v1.7.0
 	github.com/pkg/errors v0.8.1
