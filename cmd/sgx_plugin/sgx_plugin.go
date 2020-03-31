@@ -60,8 +60,9 @@ func (dp *devicePlugin) scan() (dpapi.DeviceTree, error) {
 
 	fmt.Println("SGX available:", cpuid.CPU.SGX.Available)
 	fmt.Println("SGX launch control:", cpuid.CPU.SGX.LaunchControl)
-	fmt.Println("SGX memory 1:", cpuid.CPU.SGX.MaxEnclaveSize64)
-	fmt.Println("SGX memory 2:", cpuid.CPU.SGX.MaxEnclaveSizeNot64)
+	for _, s := range cpuid.CPU.SGX.EPCSections {
+		fmt.Println("SGX EPC memory leaf:", s.EPCSize)
+	}
 
 	sgxEnclavePath := path.Join(dp.devfsDir, "sgx", "enclave")
 	sgxProvisionPath := path.Join(dp.devfsDir, "sgx", "provision")
