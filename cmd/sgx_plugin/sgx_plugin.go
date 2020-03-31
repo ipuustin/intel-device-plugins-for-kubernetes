@@ -51,7 +51,6 @@ func (dp *devicePlugin) Scan(notifier dpapi.Notifier) error {
 		}
 
 		notifier.Notify(devTree)
-
 		time.Sleep(60 * time.Second)
 	}
 }
@@ -64,20 +63,31 @@ func (dp *devicePlugin) scan() (dpapi.DeviceTree, error) {
 	fmt.Println("SGX memory 1:", cpuid.CPU.SGX.MaxEnclaveSize64)
 	fmt.Println("SGX memory 2:", cpuid.CPU.SGX.MaxEnclaveSizeNot64)
 
-	sgxPath := path.Join(dp.devfsDir, "sgx", "enclave")
-	if _, err := os.Stat(sgxPath); err != nil {
-		fmt.Println("No SGX device file available: ", err)
-	} else {
-		devID := fmt.Sprintf("%s-%d", "sgx", 0) // FIXME
-		nodes := []pluginapi.DeviceSpec{
-			pluginapi.DeviceSpec{
-				HostPath:      sgxPath,
-				ContainerPath: sgxPath,
-				Permissions:   "rw",
-			},
-		}
-		devTree.AddDevice(deviceType, devID, dpapi.NewDeviceInfo(pluginapi.Healthy, nodes, nil, nil))
+	sgxEnclavePath := path.Join(dp.devfsDir, "sgx", "enclave")
+	sgxProvisionPath := path.Join(dp.devfsDir, "sgx", "provision")
+	if _, err := os.Stat(sgxEnclavePath); err != nil {
+		fmt.Println("No SGX enclave file available: ", err)
+		return devTree, nil
 	}
+	if _, err := os.Stat(sgxProvisionPath); err != nil {
+		fmt.Println("No SGX provision file available: ", err)
+		return devTree, nil
+	}
+
+	devID := fmt.Sprintf("%s-%d", "sgx", 0) // FIXME
+	nodes := []pluginapi.DeviceSpec{
+		pluginapi.DeviceSpec{
+			HostPath:      sgxEnclavePath,
+			ContainerPath: sgxEnclavePath,
+			Permissions:   "rw",
+		},
+		pluginapi.DeviceSpec{
+			HostPath:      sgxProvisionPath,
+			ContainerPath: sgxProvisionPath,
+			Permissions:   "rw",
+		},
+	}
+	devTree.AddDevice(deviceType, devID, dpapi.NewDeviceInfo(pluginapi.Healthy, nodes, nil, nil))
 
 	return devTree, nil
 }
