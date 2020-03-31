@@ -21,11 +21,9 @@ import (
 	"path"
 	"time"
 
-	pluginapi "k8s.io/kubernetes/pkg/kubelet/apis/deviceplugin/v1beta1"
-
-	"github.com/intel/intel-device-plugins-for-kubernetes/pkg/debug"
 	dpapi "github.com/intel/intel-device-plugins-for-kubernetes/pkg/deviceplugin"
 	"github.com/klauspost/cpuid"
+	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
 const (
@@ -71,16 +69,14 @@ func (dp *devicePlugin) scan() (dpapi.DeviceTree, error) {
 		fmt.Println("No SGX device file available: ", err)
 	} else {
 		devID := fmt.Sprintf("%s-%d", "sgx", 0) // FIXME
-		devTree.AddDevice(deviceType, devID, dpapi.DeviceInfo{
-			State: pluginapi.Healthy,
-			Nodes: []pluginapi.DeviceSpec{
-				pluginapi.DeviceSpec{
-					HostPath:      sgxPath,
-					ContainerPath: sgxPath,
-					Permissions:   "rw",
-				},
+		nodes := []pluginapi.DeviceSpec{
+			pluginapi.DeviceSpec{
+				HostPath:      sgxPath,
+				ContainerPath: sgxPath,
+				Permissions:   "rw",
 			},
-		})
+		}
+		devTree.AddDevice(deviceType, devID, dpapi.NewDeviceInfo(pluginapi.Healthy, nodes, nil, nil))
 	}
 
 	return devTree, nil
@@ -91,10 +87,6 @@ func main() {
 
 	flag.BoolVar(&debugEnabled, "debug", false, "enable debug output")
 	flag.Parse()
-
-	if debugEnabled {
-		debug.Activate()
-	}
 
 	fmt.Println("SGX device plugin started")
 
