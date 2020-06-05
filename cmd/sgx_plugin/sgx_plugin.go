@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"runtime"
+	"strconv"
 	"time"
 
 	dpapi "github.com/intel/intel-device-plugins-for-kubernetes/pkg/deviceplugin"
@@ -28,18 +30,27 @@ import (
 
 const (
 	// Device plugin settings.
-	namespace  = "sgx.intel.com"
-	deviceType = "sgx"
-	devicePath = "/dev"
+	namespace              = "sgx.intel.com"
+	deviceTypeEnclave      = "enclave"
+	deviceTypeProvision    = "provision"
+	devicePath             = "/dev"
+	podsPerCoreEnvVariable = "PODS_PER_CORE"
+	defaultPodsPerCore     = 10
 )
 
 type devicePlugin struct {
-	devfsDir string
+	devfsDir     string
+	nEnclave     uint
+	nProvision   uint
+	debugEnabled bool
 }
 
-func newDevicePlugin(devfsDir string) *devicePlugin {
+func newDevicePlugin(devfsDir string, nEnclave, nProvision uint, debugEnabled bool) *devicePlugin {
 	return &devicePlugin{
-		devfsDir: devfsDir,
+		devfsDir:     devfsDir,
+		nEnclave:     nEnclave,
+		nProvision:   nProvision,
+		debugEnabled: debugEnabled,
 	}
 }
 
@@ -51,19 +62,22 @@ func (dp *devicePlugin) Scan(notifier dpapi.Notifier) error {
 		}
 
 		notifier.Notify(devTree)
-		time.Sleep(60 * time.Second)
+		time.Sleep(24 * time.Hour)
 	}
 }
 
 func (dp *devicePlugin) scan() (dpapi.DeviceTree, error) {
 	devTree := dpapi.NewDeviceTree()
 
-	fmt.Println("SGX available:", cpuid.CPU.SGX.Available)
-	fmt.Println("SGX launch control:", cpuid.CPU.SGX.LaunchControl)
-	for _, s := range cpuid.CPU.SGX.EPCSections {
-		fmt.Println("SGX EPC memory leaf:", s.EPCSize)
+	if dp.debugEnabled {
+		fmt.Println("SGX available:", cpuid.CPU.SGX.Available)
+		fmt.Println("SGX launch control:", cpuid.CPU.SGX.LaunchControl)
+		for _, s := range cpuid.CPU.SGX.EPCSections {
+			fmt.Println("SGX EPC memory leaf:", s.EPCSize)
+		}
 	}
 
+	// Assume that both /dev/sgx/enclave and /dev/sgx/provision must be present.
 	sgxEnclavePath := path.Join(dp.devfsDir, "sgx", "enclave")
 	sgxProvisionPath := path.Join(dp.devfsDir, "sgx", "provision")
 	if _, err := os.Stat(sgxEnclavePath); err != nil {
@@ -75,33 +89,51 @@ func (dp *devicePlugin) scan() (dpapi.DeviceTree, error) {
 		return devTree, nil
 	}
 
-	devID := fmt.Sprintf("%s-%d", "sgx", 0) // FIXME
-	nodes := []pluginapi.DeviceSpec{
-		pluginapi.DeviceSpec{
-			HostPath:      sgxEnclavePath,
-			ContainerPath: sgxEnclavePath,
-			Permissions:   "rw",
-		},
-		pluginapi.DeviceSpec{
-			HostPath:      sgxProvisionPath,
-			ContainerPath: sgxProvisionPath,
-			Permissions:   "rw",
-		},
+	for i := uint(0); i < dp.nEnclave; i++ {
+		devID := fmt.Sprintf("%s-%d", "sgx-enclave", i)
+		nodes := []pluginapi.DeviceSpec{{HostPath: sgxEnclavePath, ContainerPath: sgxEnclavePath, Permissions: "rw"}}
+		devTree.AddDevice(deviceTypeEnclave, devID, dpapi.NewDeviceInfo(pluginapi.Healthy, nodes, nil, nil))
 	}
-	devTree.AddDevice(deviceType, devID, dpapi.NewDeviceInfo(pluginapi.Healthy, nodes, nil, nil))
-
+	for i := uint(0); i < dp.nProvision; i++ {
+		devID := fmt.Sprintf("%s-%d", "sgx-provision", i)
+		nodes := []pluginapi.DeviceSpec{{HostPath: sgxProvisionPath, ContainerPath: sgxProvisionPath, Permissions: "rw"}}
+		devTree.AddDevice(deviceTypeProvision, devID, dpapi.NewDeviceInfo(pluginapi.Healthy, nodes, nil, nil))
+	}
 	return devTree, nil
 }
 
 func main() {
 	var debugEnabled bool
+	var enclaveLimit uint
+	var provisionLimit uint
+
+	// By default we provide as many enclave resources as there can be pods
+	// running on the node. The problem is that this value is configurable
+	// either via "--pods-per-core" or "--max-pods" kubelet options. We get the
+	// limit by multiplying the number of cores in the system with env variable
+	// "PODS_PER_CORE".
+
+	nCpus := uint(runtime.NumCPU())
+	podsPerCore := uint(defaultPodsPerCore)
+
+	envPodsPerCore := os.Getenv(podsPerCoreEnvVariable)
+	if envPodsPerCore != "" {
+		tmp, err := strconv.ParseUint(envPodsPerCore, 10, 32)
+		if err != nil {
+			fmt.Printf("Error: failed to parse %s value as uint, using default value.\n", podsPerCoreEnvVariable)
+		} else {
+			podsPerCore = uint(tmp)
+		}
+	}
 
 	flag.BoolVar(&debugEnabled, "debug", false, "enable debug output")
+	flag.UintVar(&enclaveLimit, "enclave-limit", podsPerCore*nCpus, "Number of \"enclave\" resources")
+	flag.UintVar(&provisionLimit, "provision-limit", podsPerCore*nCpus, "Number of \"provision\" resources")
 	flag.Parse()
 
-	fmt.Println("SGX device plugin started")
+	fmt.Printf("SGX device plugin started with %d \"%s/enclave\" resources and %d \"%s/provision\" resources.\n", enclaveLimit, namespace, provisionLimit, namespace)
 
-	plugin := newDevicePlugin(devicePath)
+	plugin := newDevicePlugin(devicePath, enclaveLimit, provisionLimit, debugEnabled)
 	manager := dpapi.NewManager(namespace, plugin)
 	manager.Run()
 }
