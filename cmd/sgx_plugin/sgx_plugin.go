@@ -21,10 +21,11 @@ import (
 	"path"
 	"runtime"
 	"strconv"
-	"time"
+	"sync"
 
 	dpapi "github.com/intel/intel-device-plugins-for-kubernetes/pkg/deviceplugin"
 	"github.com/klauspost/cpuid"
+	"k8s.io/klog"
 	pluginapi "k8s.io/kubelet/pkg/apis/deviceplugin/v1beta1"
 )
 
@@ -45,47 +46,46 @@ type devicePlugin struct {
 	debugEnabled bool
 }
 
-func newDevicePlugin(devfsDir string, nEnclave, nProvision uint, debugEnabled bool) *devicePlugin {
+func newDevicePlugin(devfsDir string, nEnclave, nProvision uint) *devicePlugin {
 	return &devicePlugin{
-		devfsDir:     devfsDir,
-		nEnclave:     nEnclave,
-		nProvision:   nProvision,
-		debugEnabled: debugEnabled,
+		devfsDir:   devfsDir,
+		nEnclave:   nEnclave,
+		nProvision: nProvision,
 	}
 }
 
 func (dp *devicePlugin) Scan(notifier dpapi.Notifier) error {
-	for {
-		devTree, err := dp.scan()
-		if err != nil {
-			return err
-		}
-
-		notifier.Notify(devTree)
-		time.Sleep(24 * time.Hour)
+	devTree, err := dp.scan()
+	if err != nil {
+		return err
 	}
+	notifier.Notify(devTree)
+
+	// Wait forever to prevent manager run loop from exiting. TODO: catch a signal to break.
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	wg.Wait()
+	return nil
 }
 
 func (dp *devicePlugin) scan() (dpapi.DeviceTree, error) {
 	devTree := dpapi.NewDeviceTree()
 
-	if dp.debugEnabled {
-		fmt.Println("SGX available:", cpuid.CPU.SGX.Available)
-		fmt.Println("SGX launch control:", cpuid.CPU.SGX.LaunchControl)
-		for _, s := range cpuid.CPU.SGX.EPCSections {
-			fmt.Println("SGX EPC memory leaf:", s.EPCSize)
-		}
+	klog.V(6).Info("SGX available:", cpuid.CPU.SGX.Available)
+	klog.V(6).Info("SGX launch control:", cpuid.CPU.SGX.LaunchControl)
+	for _, s := range cpuid.CPU.SGX.EPCSections {
+		klog.V(6).Info("SGX EPC memory leaf:", s.EPCSize)
 	}
 
 	// Assume that both /dev/sgx/enclave and /dev/sgx/provision must be present.
 	sgxEnclavePath := path.Join(dp.devfsDir, "sgx", "enclave")
 	sgxProvisionPath := path.Join(dp.devfsDir, "sgx", "provision")
 	if _, err := os.Stat(sgxEnclavePath); err != nil {
-		fmt.Println("No SGX enclave file available: ", err)
+		klog.Error("No SGX enclave file available: ", err)
 		return devTree, nil
 	}
 	if _, err := os.Stat(sgxProvisionPath); err != nil {
-		fmt.Println("No SGX provision file available: ", err)
+		klog.Error("No SGX provision file available: ", err)
 		return devTree, nil
 	}
 
@@ -103,7 +103,6 @@ func (dp *devicePlugin) scan() (dpapi.DeviceTree, error) {
 }
 
 func main() {
-	var debugEnabled bool
 	var enclaveLimit uint
 	var provisionLimit uint
 
@@ -120,20 +119,19 @@ func main() {
 	if envPodsPerCore != "" {
 		tmp, err := strconv.ParseUint(envPodsPerCore, 10, 32)
 		if err != nil {
-			fmt.Printf("Error: failed to parse %s value as uint, using default value.\n", podsPerCoreEnvVariable)
+			klog.Error("Error: failed to parse %s value as uint, using default value.", podsPerCoreEnvVariable)
 		} else {
 			podsPerCore = uint(tmp)
 		}
 	}
 
-	flag.BoolVar(&debugEnabled, "debug", false, "enable debug output")
 	flag.UintVar(&enclaveLimit, "enclave-limit", podsPerCore*nCpus, "Number of \"enclave\" resources")
 	flag.UintVar(&provisionLimit, "provision-limit", podsPerCore*nCpus, "Number of \"provision\" resources")
 	flag.Parse()
 
-	fmt.Printf("SGX device plugin started with %d \"%s/enclave\" resources and %d \"%s/provision\" resources.\n", enclaveLimit, namespace, provisionLimit, namespace)
+	klog.V(4).Info("SGX device plugin started with %d \"%s/enclave\" resources and %d \"%s/provision\" resources.", enclaveLimit, namespace, provisionLimit, namespace)
 
-	plugin := newDevicePlugin(devicePath, enclaveLimit, provisionLimit, debugEnabled)
+	plugin := newDevicePlugin(devicePath, enclaveLimit, provisionLimit)
 	manager := dpapi.NewManager(namespace, plugin)
 	manager.Run()
 }
